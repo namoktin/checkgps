@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Spatial AI Guide - Simulator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- Thêm thư viện WebSocket -->
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #070b14; color: #f8fafc; overflow: hidden; }
+    #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
+    
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 10px; height: 10px;
+      transform: translate(-50%, -50%); pointer-events: none; z-index: 5;
+      border: 2px solid rgba(255, 255, 255, 0.5); border-radius: 50%;
+      transition: all 0.15s ease; display: none;
+    }
+    #crosshair.locked { width: 22px; height: 22px; border-color: #facc15; background: rgba(250, 204, 21, 0.3); box-shadow: 0 0 16px #eab308; }
+    #crosshair.playing { width: 28px; height: 28px; border-color: #38bdf8; background: rgba(56, 189, 248, 0.35); box-shadow: 0 0 20px #0284c7; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { from { transform: translate(-50%, -50%) scale(0.92); } to { transform: translate(-50%, -50%) scale(1.15); } }
+
+    .hud-panel {
+      position: absolute; top: 16px; left: 16px; width: 330px; max-height: calc(100vh - 32px);
+      background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
+      padding: 16px; overflow-y: auto; z-index: 10; font-size: 13px; box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+    }
+    .hud-right { left: auto; right: 16px; width: 390px; }
+    
+    h2 { font-size: 14px; font-weight: 700; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+    .badge { font-size: 10px; background: #0284c7; color: #fff; padding: 2px 6px; border-radius: 4px; }
+    .badge-fps { background: #10b981; }
+
+    .guide-box { background: #1e293b; border-left: 3px solid #38bdf8; border-radius: 4px; padding: 8px; font-size: 11px; line-height: 1.5; color: #cbd5e1; margin-bottom: 12px; }
+    .btn-mode { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #38bdf8; font-weight: 700; font-size: 12px; cursor: pointer; background: rgba(56, 189, 248, 0.15); color: #38bdf8; margin-bottom: 10px; text-align: center; }
+    .btn-mode.active-fps { background: #10b981; color: #022c22; border-color: #10b981; box-shadow: 0 0 14px rgba(16, 185, 129, 0.5); }
+    
+    .control-group { margin-bottom: 10px; }
+    .control-label { display: flex; justify-content: space-between; margin-bottom: 3px; color: #94a3b8; font-size: 11px; }
+    .control-label span.val { color: #38bdf8; font-weight: 600; font-family: monospace; }
+    input[type=range] { width: 100%; accent-color: #38bdf8; cursor: pointer; }
+
+    .btn-stop { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #ef4444; font-weight: 700; font-size: 11px; cursor: pointer; background: rgba(239, 68, 68, 0.2); color: #f87171; margin-bottom: 8px; }
+    .btn-ptt { width: 100%; padding: 10px; border-radius: 8px; border: none; font-weight: 700; font-size: 12px; cursor: pointer; background: #334155; color: #cbd5e1; }
+    .btn-ptt.active { background: #ef4444; color: #fff; transform: scale(0.98); }
+    
+    .telemetry-box { background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; font-family: monospace; font-size: 11px; line-height: 1.4; color: #38bdf8; margin-bottom: 8px; white-space: pre-wrap; word-break: break-all; }
+    .status-locked { color: #facc15; font-weight: 700; }
+    .status-playing { color: #38bdf8; font-weight: 700; }
+    .status-cooldown { color: #f87171; font-weight: 600; }
+    .status-none { color: #64748b; }
+    
+    /* Giao diện Chat AI Hacker */
+    #ai-chat-box {
+        position: absolute; bottom: 16px; left: 16px; width: 330px; height: 280px;
+        background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(12px);
+        border: 1px solid #38bdf8; border-radius: 12px; display: flex; flex-direction: column;
+        z-index: 10; box-shadow: 0 10px 40px rgba(0,0,0,0.7); overflow: hidden;
+    }
+    #chat-header { background: #0284c7; color: white; padding: 8px 12px; font-size: 13px; font-weight: bold; }
+    #chat-history { flex: 1; padding: 10px; overflow-y: auto; font-size: 12px; color: #cbd5e1; display: flex; flex-direction: column; gap: 8px; }
+    .msg-user { align-self: flex-end; background: #38bdf8; color: #0f172a; padding: 6px 10px; border-radius: 10px 10px 0 10px; max-width: 80%; }
+    .msg-ai { align-self: flex-start; background: #1e293b; border: 1px solid #475569; padding: 6px 10px; border-radius: 10px 10px 10px 0; max-width: 90%; line-height: 1.4; color: #f8fafc; }
+    #chat-input-area { display: flex; padding: 8px; background: #0f172a; border-top: 1px solid #1e293b; }
+    #chat-input { flex: 1; background: #020617; border: 1px solid #475569; color: #38bdf8; padding: 8px; border-radius: 6px; outline: none; font-family: monospace; font-size: 12px; }
+    #chat-send { background: #38bdf8; color: #0f172a; border: none; padding: 0 12px; margin-left: 6px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+  <div id="crosshair"></div>
+
+  <!-- HUD LEFT -->
+  <div class="hud-panel" id="hud-left">
+    <h2>Điều Khiển Tham Quan <span class="badge" id="mode-badge">360° ORBIT</span></h2>
+    <button class="btn-mode" id="btn-toggle-mode">CHUYỂN SANG GÓC NHÌN THỨ NHẤT (FPS)</button>
+    <button class="btn-stop" id="btn-stop-audio">DỪNG THUYẾT MINH NGAY (PHÍM X)</button>
+    
+    <div class="control-group">
+      <div class="control-label">Tọa độ X: <span class="val" id="val-x">0.0 m</span></div>
+      <input type="range" id="input-x" min="-6" max="6" step="0.05" value="0">
+    </div>
+    
+    <div class="control-group">
+      <div class="control-label">Tọa độ Z: <span class="val" id="val-z">2.0 m</span></div>
+      <input type="range" id="input-z" min="-6" max="6" step="0.05" value="2">
+    </div>
+
+    <div class="control-group">
+      <div class="control-label">Xoay Yaw: <span class="val" id="val-yaw">0°</span></div>
+      <input type="range" id="input-yaw" min="0" max="360" step="1" value="0">
+    </div>
+
+    <div class="control-group">
+      <div class="control-label">Pitch: <span class="val" id="val-pitch">0°</span></div>
+      <input type="range" id="input-pitch" min="-45" max="45" step="1" value="0">
+    </div>
+  </div>
+
+  <!-- BẢNG CHAT AI -->
+  <div id="ai-chat-box">
+    <div id="chat-header">Trợ lý AI Không Gian (RAG)</div>
+    <div id="chat-history">
+        <div class="msg-ai">Hệ thống AI đã sẵn sàng. Bạn muốn hỏi gì về các cổ vật tại đây?</div>
+    </div>
+    <div id="chat-input-area">
+        <input type="text" id="chat-input" placeholder="Nhập câu hỏi...">
+        <button id="chat-send">GỬI</button>
+    </div>
+  </div>
+
+  <!-- HUD RIGHT -->
+  <div class="hud-panel hud-right" id="hud-right">
+    <h2>Trạng Thái Cổ Vật <span class="badge" style="background:#10b981">REALTIME</span></h2>
+    <div id="target-status" class="telemetry-box status-none">Chưa khóa hiện vật nào</div>
+    <div class="telemetry-box" id="nmea-box">$GNRMC,...</div>
+    <div class="telemetry-box" id="json-box" style="height: 140px; overflow-y: auto;">{}</div>
+  </div>
+
+  <script>
+    // --- KHỞI TẠO THREE.JS ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x070b14);
+    scene.fog = new THREE.FogExp2(0x070b14, 0.035);
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2 - 0.02;
+    controls.target.set(0, 1.2, 0);
+    camera.position.set(0, 7, 8);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffedd5, 0.85);
+    dirLight.position.set(6, 14, 8);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    const grid = new THREE.GridHelper(16, 16, 0x38bdf8, 0x1e293b);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // --- CỔ VẬT & MESH ---
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.7 });
+    [[-3.5, -4], [3.5, -4], [-3.5, 0], [3.5, 0]].forEach(([px, pz]) => {
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 4, 16), woodMat);
+      pillar.position.set(px, 2, pz);
+      scene.add(pillar);
+    });
+
+    // 3 Cổ vật
+    const tabletMesh = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.5, 0.2), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+    tabletMesh.position.set(0, 1.1, -3.8);
+    scene.add(tabletMesh);
+
+    const burnerMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.25, 0.8, 16), new THREE.MeshStandardMaterial({ color: 0xd97706 }));
+    burnerMesh.position.set(-2.8, 0.5, -1.5);
+    scene.add(burnerMesh);
+
+    const plaqueMesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.7, 0.1), new THREE.MeshStandardMaterial({ color: 0xb91c1c }));
+    plaqueMesh.position.set(0, 3.6, -3.9);
+    scene.add(plaqueMesh);
+
+    const artifacts = [
+      { id: "POI_1", name: "Bia Tiến Sĩ", pos: new THREE.Vector3(0, 1.1, -3.8), mesh: tabletMesh },
+      { id: "POI_2", name: "Lư Hương", pos: new THREE.Vector3(-2.8, 0.6, -1.5), mesh: burnerMesh },
+      { id: "POI_3", name: "Hoành Phi", pos: new THREE.Vector3(0, 3.6, -3.9), mesh: plaqueMesh }
+    ];
+    artifacts.forEach(a => { a.origColor = a.mesh.material.color.getHex(); });
+
+    // --- DU KHÁCH ---
+    const visitorGroup = new THREE.Group();
+    scene.add(visitorGroup);
+    const bodyMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.2), new THREE.MeshStandardMaterial({ color: 0x38bdf8 }));
+    bodyMesh.position.y = 0.6;
+    visitorGroup.add(bodyMesh);
+
+    const coneGeo = new THREE.ConeGeometry(1.7, 4.2, 16, 1, true); // Góc ~22.5 độ, dài 4.2m
+    coneGeo.translate(0, -2.1, 0);
+    coneGeo.rotateX(Math.PI / 2);
+    const sightCone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.2, wireframe: true }));
+    sightCone.position.y = 1.6;
+    visitorGroup.add(sightCone);
+
+    // --- BIẾN TRẠNG THÁI ---
+    let isFPS = false; let isPointerLocked = false;
+    let posX = 0, posZ = 2, posY = 1.6;
+    let yaw = 0, pitch = 0;
+    const keys = {};
+
+    let isAudioPlaying = false;
+    let currentPlayingArtifact = null; 
+    let currentLockedArtifact = null;  
+    let lockStartTime = 0;
+    const cooldownMap = {};
+
+    // --- LOGIC AUDIO ---
+    function stopAudioNarration() {
+      isAudioPlaying = false; currentPlayingArtifact = null; currentLockedArtifact = null;
+      lockStartTime = Date.now(); updateCalculations();
+    }
+    document.getElementById('btn-stop-audio').addEventListener('click', stopAudioNarration);
+
+    function triggerAudioNarration(item) {
+      isAudioPlaying = true; currentPlayingArtifact = item;
+      setTimeout(() => {
+        isAudioPlaying = false; currentPlayingArtifact = null;
+        cooldownMap[item.id] = Date.now() + 15000;
+        lockStartTime = Date.now(); updateCalculations();
+      }, 3000); // Giả lập phát audio 3s
+    }
+
+    // --- TÍNH TOÁN & CẬP NHẬT ---
+    function updateCalculations() {
+      visitorGroup.position.set(posX, 0, posZ);
+      sightCone.position.y = posY;
+
+      const yawRad = THREE.MathUtils.degToRad(yaw);
+      const pitchRad = THREE.MathUtils.degToRad(pitch);
+      visitorGroup.rotation.y = -yawRad;
+      sightCone.rotation.x = pitchRad;
+
+      const lookDir = new THREE.Vector3(Math.sin(yawRad)*Math.cos(pitchRad), Math.sin(pitchRad), -Math.cos(yawRad)*Math.cos(pitchRad)).normalize();
+
+      if (isFPS) {
+        camera.position.set(posX, posY, posZ);
+        camera.lookAt(posX + lookDir.x, posY + lookDir.y, posZ + lookDir.z);
+      }
+
+      let detectedItem = null;
+      artifacts.forEach(item => {
+        const toTarget = new THREE.Vector3().subVectors(item.pos, new THREE.Vector3(posX, posY, posZ));
+        if (toTarget.length() <= 4.2 && THREE.MathUtils.radToDeg(lookDir.angleTo(toTarget)) <= 22.5) {
+          detectedItem = item; item.mesh.material.color.setHex(0x4ade80);
+        } else {
+          item.mesh.material.color.setHex(item.origColor);
+        }
+      });
+
+      const now = Date.now();
+      let statusText = "Chưa khóa hiện vật nào", statusClass = "status-none";
+
+      if (isAudioPlaying && currentPlayingArtifact) {
+        statusText = `[ĐANG PHÁT] ${currentPlayingArtifact.name}`;
+        statusClass = "status-playing";
+      } else if (detectedItem) {
+        const cd = Math.max(0, (cooldownMap[detectedItem.id] || 0) - now);
+        if (cd > 0) {
+          statusText = `[HỒI CHIÊU] ${detectedItem.name} (${(cd/1000).toFixed(1)}s)`;
+          statusClass = "status-cooldown";
+        } else {
+          if (currentLockedArtifact !== detectedItem) { currentLockedArtifact = detectedItem; lockStartTime = now; }
+          const dwell = (now - lockStartTime) / 1000;
+          if (dwell < 1.5) {
+            statusText = `[ĐANG NGẮM] ${detectedItem.name} (${(1.5-dwell).toFixed(1)}s)`;
+            statusClass = "status-locked";
+          } else triggerAudioNarration(detectedItem);
+        }
+      }
+
+      if(document.getElementById('crosshair')) {
+          document.getElementById('crosshair').className = isAudioPlaying ? 'playing' : (detectedItem ? 'locked' : '');
+      }
+
+      // Quy đổi công thức tọa độ
+      const lat = 21.028500 + (-posZ * 0.00002); 
+      const lon = 105.854200 + (posX * 0.00002); 
+      renderTelemetry(posX, posZ, yaw, pitch, lat, lon, statusText, statusClass);
+    }
+
+    // --- KẾT NỐI WEBSOCKET, CHAT & ANTI-LAG ---
+    const socketio = io(); 
+    let lastEmitTime = 0; // Bộ lọc giới hạn số gói tin
+
+    function renderTelemetry(x, z, yawVal, pitchVal, lat, lon, statusText, statusClass) {
+      document.getElementById('val-x').innerText = x.toFixed(2) + 'm';
+      document.getElementById('val-z').innerText = z.toFixed(2) + 'm';
+      document.getElementById('val-yaw').innerText = Math.round(yawVal) + '°';
+      document.getElementById('target-status').innerText = statusText;
+      document.getElementById('target-status').className = 'telemetry-box ' + statusClass;
+      
+      const payload = {
+        device_id: "ESP32_HEADSET",
+        sensors: {
+          gps: { lat: parseFloat(lat.toFixed(7)), lon: parseFloat(lon.toFixed(7)) },
+          compass: { yaw: Math.round(yawVal), pitch: Math.round(pitchVal) }
+        }
+      };
+      document.getElementById('json-box').innerText = JSON.stringify(payload, null, 2);
+
+      const now = Date.now();
+      // CHỐNG NGHẼN MẠNG: Gửi gói tin mỗi 60ms (Tối đa 15 khung hình/giây sang 2D)
+      if (now - lastEmitTime > 60) {
+        socketio.emit('send-telemetry', payload);
+        lastEmitTime = now;
+      }
+    }
+
+    // Logic Chat AI
+    const chatInput = document.getElementById('chat-input');
+    function sendChat() {
+      const text = chatInput.value.trim();
+      if(!text) return;
+      document.getElementById('chat-history').innerHTML += `<div class="msg-user">${text}</div>`;
+      socketio.emit('ask-ai', { question: text });
+      chatInput.value = '';
+    }
+    document.getElementById('chat-send').addEventListener('click', sendChat);
+    chatInput.addEventListener('keypress', (e) => e.key === 'Enter' && sendChat());
+    
+    socketio.on('ai-answer', (data) => {
+      document.getElementById('chat-history').innerHTML += `<div class="msg-ai">${data.reply}</div>`;
+      document.getElementById('chat-history').scrollTop = 9999;
+    });
+
+    // --- ĐIỀU KHIỂN & LIA CHUỘT ---
+    document.getElementById('btn-toggle-mode').addEventListener('click', () => {
+      isFPS = !isFPS;
+      document.getElementById('crosshair').style.display = isFPS ? 'block' : 'none';
+      if(isFPS) container.requestPointerLock(); else document.exitPointerLock();
+      updateCalculations();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isFPS || document.pointerLockElement !== container) return;
+      yaw = (yaw + e.movementX * 0.12 + 360) % 360;
+      pitch = Math.max(-45, Math.min(45, pitch - e.movementY * 0.12));
+      updateCalculations();
+    });
+
+    window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; if(e.key.toLowerCase()==='x') stopAudioNarration(); });
+    window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+
+    function handleMovement() {
+      let moved = false; const speed = 0.055;
+      const yawRad = THREE.MathUtils.degToRad(yaw);
+      const forward = new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad));
+      const right = new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad));
+      let moveVec = new THREE.Vector3(0, 0, 0);
+
+      if (isFPS) {
+        if (keys['w']) moveVec.add(forward); if (keys['s']) moveVec.sub(forward);
+        if (keys['d']) moveVec.add(right); if (keys['a']) moveVec.sub(right);
+      } else {
+        if (keys['w']) moveVec.z -= 1; if (keys['s']) moveVec.z += 1;
+        if (keys['d']) moveVec.x += 1; if (keys['a']) moveVec.x -= 1;
+      }
+      
+      if (moveVec.lengthSq() > 0) {
+        moveVec.normalize().multiplyScalar(speed);
+        posX = Math.max(-6, Math.min(6, posX + moveVec.x));
+        posZ = Math.max(-6, Math.min(6, posZ + moveVec.z));
+        moved = true;
+      }
+      if(moved) updateCalculations();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      handleMovement();
+      if (!isFPS) controls.update();
+      renderer.render(scene, camera);
+    }
+    updateCalculations(); animate();
+  </script>
+</body>
+</html>

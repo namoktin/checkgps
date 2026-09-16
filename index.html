@@ -1,43 +1,89 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Bản đồ Định vị ESP32 (Real-time)</title>
-    <!-- Tải thư viện bản đồ Leaflet -->
+    <title>Bản đồ 2D - Đồng bộ Không gian 3D (Native Scaling & Zero Lag)</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <!-- Tải thư viện Socket.IO (Bắt buộc phải có để nghe Server) -->
     <script src="/socket.io/socket.io.js"></script>
-
     <style> 
-        #map { height: 100vh; width: 100%; margin: 0; padding: 0; } 
-        body { margin: 0; } 
-        /* Thêm hiệu ứng trượt mượt mà (CSS Transition) cho cái ghim marker */
-        .leaflet-marker-icon { transition: transform 1s linear; }
+        body { margin: 0; padding: 0; background: #0f172a; }
+        #map { height: 100vh; width: 100%; } 
+        
+        /* Chấm tròn định vị người chơi */
+        .player-dot { 
+            width: 14px; height: 14px; background: #38bdf8; 
+            border: 2px solid white; border-radius: 50%;
+            position: absolute; top: -7px; left: -7px; z-index: 10;
+            box-shadow: 0 0 10px #38bdf8;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <script>
-        // 1. Khởi tạo bản đồ tại khu vực Di tích
-        var map = L.map('map').setView([21.0253, 105.8465], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        var marker = L.marker([21.0253, 105.8465]).addTo(map);
+        // 1. Cấu hình Bản đồ Vệ tinh siêu Zoom
+        var map = L.map('map', { maxZoom: 24, zoomControl: true }).setView([21.028500, 105.854200], 23); 
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxNativeZoom: 19, maxZoom: 24, attribution: 'Tiles &copy; Esri'
+        }).addTo(map);
 
-        // 2. Cắm ống kết nối ngầm vào Server
-        const socket = io(); // Tự động dò tìm địa chỉ máy chủ hiện tại
+        // 2. Tọa độ Cổ vật (Đã giãn cách để không gian rộng rãi hơn)
+        const artifacts = [
+            { name: "Bia Tiến Sĩ", lat: 21.0286000, lon: 105.8542000, color: "#94a3b8" },   
+            { name: "Lư Hương", lat: 21.0285600, lon: 105.8541300, color: "#d97706" }, 
+            { name: "Hoành Phi", lat: 21.0286200, lon: 105.8542500, color: "#ef4444" }    
+        ];
 
-        // 3. Hứng dữ liệu: BẤT CỨ KHI NÀO Server bắn tọa độ mới xuống, lập tức di chuyển marker
-        socket.on('location-updated', (data) => {
-            var newLatLng = new L.LatLng(data.lat, data.lng);
-            
-            // Trượt marker mượt mà đến điểm mới
-            marker.setLatLng(newLatLng);
-            
-            // Trượt camera đi theo (chỉ trượt nếu điểm mới cách điểm cũ quá xa để tránh giật màn hình)
-            map.panTo(newLatLng, { animate: true, duration: 1 });
-            
-            console.log("📍 Đã nhận tọa độ mới:", data);
+        artifacts.forEach(art => {
+            L.circleMarker([art.lat, art.lon], {
+                color: art.color, fillColor: art.color, fillOpacity: 0.9, radius: 6
+            }).addTo(map).bindPopup(`<b>${art.name}</b>`);
+        });
+
+        // 3. Khởi tạo người chơi
+        const playerIcon = L.divIcon({ html: '<div class="player-dot"></div>', className: '', iconSize: [0, 0] });
+        let playerMarker = L.marker([21.028500, 105.854200], { icon: playerIcon, zIndexOffset: 1000 }).addTo(map);
+
+        // 4. Polygon vẽ nón tầm nhìn toán học
+        let visionPolygon = L.polygon([], {
+            color: '#38bdf8', fillColor: '#38bdf8', fillOpacity: 0.35, weight: 1.5, dashArray: '4'
+        }).addTo(map);
+
+        // Công thức tính điểm đến dựa trên Tọa độ gốc, Hướng và Khoảng cách (Mét)
+        function getDestinationPoint(lat, lng, headingDeg, distMeters) {
+            const R = 6371e3;
+            const brng = headingDeg * Math.PI / 180;
+            const lat1 = lat * Math.PI / 180;
+            const lon1 = lng * Math.PI / 180;
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distMeters / R) + Math.cos(lat1) * Math.sin(distMeters / R) * Math.cos(brng));
+            const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(distMeters / R) * Math.cos(lat1), Math.cos(distMeters / R) - Math.sin(lat1) * Math.sin(lat2));
+            return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+        }
+
+        const socket = io();
+        let isFirstLoad = true;
+
+        socket.on('telemetry-updated', (data) => {
+            const gps = data.sensors.gps;
+            const compass = data.sensors.compass;
+            const newPos = new L.LatLng(gps.lat, gps.lon);
+
+            // Cập nhật vị trí chấm tròn
+            playerMarker.setLatLng(newPos);
+
+            // Bắn 2 tia góc 45 độ, dài 4.2 mét
+            const leftPoint = getDestinationPoint(gps.lat, gps.lon, compass.yaw - 22.5, 13.5);
+            const rightPoint = getDestinationPoint(gps.lat, gps.lon, compass.yaw + 22.5, 13.5);
+
+            visionPolygon.setLatLngs([ [gps.lat, gps.lon], leftPoint, rightPoint ]);
+
+            // CAMERA ANTI-LAG: Tắt animate để bản đồ dính chặt vào mục tiêu không bị trượt giật cục
+            if(isFirstLoad) {
+                map.setView(newPos, 23);
+                isFirstLoad = false;
+            } else {
+                map.setView(newPos, map.getZoom(), { animate: false });
+            }
         });
     </script>
 </body>
