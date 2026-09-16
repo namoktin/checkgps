@@ -1,39 +1,39 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
-const path = require('path');
+const { Server } = require('socket.io');
+const path = require('path'); // Thêm thư viện quản lý đường dẫn file
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
+
 app.use(cors());
-app.use(express.json());
 
-// Tọa độ mặc định (Hà Nội)
-let currentLocation = { lat: 21.0285, lng: 105.8542 }; 
-
-// 1. API GIẢ LẬP GPS: Trả về chuỗi NMEA (Tọa độ một điểm tại Hà Nội)
-app.get('/api/mock-gps', (req, res) => {
-    const nmeaString = "$GPGGA,045104.000,2101.7100,N,10551.2520,E,1,09,1.2,21.6,M,-22.5,M,,0000*62\r\n";
-    res.send(nmeaString);
-});
-
-// 2. API NHẬN DỮ LIỆU: ESP32 sẽ gửi JSON tọa độ đã phân tích vào đây
-app.post('/api/location', (req, res) => {
-    console.log("ESP32 vua gui toa do moi:", req.body);
-    if(req.body.lat && req.body.lng) {
-        currentLocation = req.body;
-    }
-    res.sendStatus(200);
-});
-
-// 3. API CHO WEB BẢN ĐỒ: Lấy tọa độ hiện tại để hiển thị
-app.get('/api/current-location', (req, res) => {
-    res.json(currentLocation);
-});
-
-// Phục vụ file giao diện Web
+// --- LỆNH MỚI: MỞ QUẦY GET TRANG CHỦ ---
 app.get('/', (req, res) => {
+    // Trả về file index.html nằm cùng thư mục với server.js
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.listen(3000, () => {
-    console.log('Server dang chay tai http://localhost:3000');
+// Tọa độ trung tâm mặc định
+let currentLocation = { lat: 21.0253, lng: 105.8465 };
+
+io.on('connection', (socket) => {
+    console.log('🔗 Thiết bị vừa kết nối:', socket.id);
+    socket.emit('location-updated', currentLocation);
+
+    socket.on('send-gps', (data) => {
+        currentLocation = data;
+        // Bắn tọa độ đi cho tất cả những ai đang xem bản đồ
+        io.emit('location-updated', currentLocation); 
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ Đã ngắt kết nối');
+    });
+});
+
+server.listen(3000, () => {
+    console.log('🚀 Server đang chạy. Mở http://localhost:3000 để xem bản đồ.');
 });

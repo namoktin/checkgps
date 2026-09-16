@@ -1,30 +1,44 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Ban do Dinh vi ESP32</title>
+    <title>Bản đồ Định vị ESP32 (Real-time)</title>
     <!-- Tải thư viện bản đồ Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style> #map { height: 100vh; width: 100%; margin: 0; padding: 0; } body { margin: 0; } </style>
+    
+    <!-- Tải thư viện Socket.IO (Bắt buộc phải có để nghe Server) -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <style> 
+        #map { height: 100vh; width: 100%; margin: 0; padding: 0; } 
+        body { margin: 0; } 
+        /* Thêm hiệu ứng trượt mượt mà (CSS Transition) cho cái ghim marker */
+        .leaflet-marker-icon { transition: transform 1s linear; }
+    </style>
 </head>
 <body>
     <div id="map"></div>
     <script>
-        // Khởi tạo bản đồ
-        var map = L.map('map').setView([21.0285, 105.8542], 13);
+        // 1. Khởi tạo bản đồ tại khu vực Di tích
+        var map = L.map('map').setView([21.0253, 105.8465], 16);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        var marker = L.marker([21.0285, 105.8542]).addTo(map);
+        var marker = L.marker([21.0253, 105.8465]).addTo(map);
 
-        // Liên tục cập nhật vị trí mỗi 3 giây
-        setInterval(() => {
-            fetch('/api/current-location')
-                .then(res => res.json())
-                .then(data => {
-                    var newLatLng = new L.LatLng(data.lat, data.lng);
-                    marker.setLatLng(newLatLng);
-                    map.panTo(newLatLng);
-                });
-        }, 3000);
+        // 2. Cắm ống kết nối ngầm vào Server
+        const socket = io(); // Tự động dò tìm địa chỉ máy chủ hiện tại
+
+        // 3. Hứng dữ liệu: BẤT CỨ KHI NÀO Server bắn tọa độ mới xuống, lập tức di chuyển marker
+        socket.on('location-updated', (data) => {
+            var newLatLng = new L.LatLng(data.lat, data.lng);
+            
+            // Trượt marker mượt mà đến điểm mới
+            marker.setLatLng(newLatLng);
+            
+            // Trượt camera đi theo (chỉ trượt nếu điểm mới cách điểm cũ quá xa để tránh giật màn hình)
+            map.panTo(newLatLng, { animate: true, duration: 1 });
+            
+            console.log("📍 Đã nhận tọa độ mới:", data);
+        });
     </script>
 </body>
 </html>

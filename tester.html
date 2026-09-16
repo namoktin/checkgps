@@ -2,55 +2,150 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Công cụ giả lập ESP32</title>
+    <title>ESP32-S3 // SPATIAL INFILTRATION TERMINAL</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        button { padding: 15px 30px; font-size: 18px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        button:hover { background-color: #218838; }
-        #log { margin-top: 20px; font-weight: bold; color: #333; }
+        body {
+            background-color: #050505; color: #0f0;
+            font-family: "Courier New", Courier, monospace;
+            margin: 0; padding: 20px;
+            display: flex; flex-direction: column; align-items: center;
+            height: 100vh; overflow: hidden;
+        }
+        .terminal-box {
+            border: 1px solid #0f0; box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+            width: 80%; max-width: 800px; padding: 20px;
+            background: rgba(0, 20, 0, 0.8); position: relative;
+        }
+        .terminal-box::before {
+            content: " "; display: block; position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2; background-size: 100% 2px, 3px 100%; pointer-events: none;
+        }
+        h1 { font-size: 1.5rem; border-bottom: 1px dashed #0f0; padding-bottom: 10px; text-transform: uppercase; margin-top: 0; }
+        .status-panel { display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 1.1rem; }
+        .highlight { color: #fff; background-color: #0f0; padding: 2px 5px; font-weight: bold; }
+        .danger { color: #f00; border: 1px solid #f00; padding: 2px 5px; }
+
+        /* Bảng LED hiển thị Tọa độ Live (CHỈ CẬP NHẬT Ở ĐÂY) */
+        #telemetry-box {
+            border: 1px solid #0ff;
+            background: rgba(0, 255, 255, 0.1);
+            color: #0ff;
+            text-align: center;
+            padding: 15px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-shadow: 0 0 10px #0ff;
+        }
+
+        #log-container {
+            height: 180px; border: 1px solid #033; background-color: #000;
+            padding: 10px; overflow-y: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+        }
+        .log-line { margin: 3px 0; font-size: 0.9rem; opacity: 0.8; animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 0.8; transform: translateY(0); } }
+
+        .controls { margin-top: 20px; display: flex; gap: 15px; justify-content: center; z-index: 5; position: relative; }
+        button {
+            background-color: #000; color: #0f0; border: 1px solid #0f0;
+            padding: 10px 20px; font-family: inherit; font-size: 1.2rem; cursor: pointer; transition: all 0.2s;
+        }
+        button:hover { background-color: #0f0; color: #000; box-shadow: 0 0 10px #0f0; }
+        #stopBtn { color: #f00; border-color: #f00; display: none; }
+        #stopBtn:hover { background-color: #f00; color: #000; box-shadow: 0 0 10px #f00; }
     </style>
 </head>
 <body>
 
-    <h2>Công cụ Test API Bắn Tọa Độ</h2>
-    <button onclick="sendFakeGPS()">🚀 Bấm để gửi tọa độ giả</button>
-    <div id="log">Chưa có hành động nào...</div>
+    <div class="terminal-box">
+        <h1>[ROOT@NODE.JS] ~ INFILTRATION UPLINK</h1>
+        
+        <div class="status-panel">
+            <span>UPLINK STATUS: <span id="conn-status" class="danger">OFFLINE</span></span>
+            <span>DEVICE ID: <span id="device-id" class="highlight">AWAITING...</span></span>
+        </div>
+
+        <!-- MÀN HÌNH RADAR CHỈ GHI ĐÈ SỐ LIỆU -->
+        <div id="telemetry-box">
+            [ TELEMETRY: STANDBY ]
+        </div>
+
+        <div id="log-container">
+            <div class="log-line">> Khởi tạo hệ thống giả lập ESP32-S3...</div>
+            <div class="log-line">> Đang tìm kiếm Server WebSocket cục bộ...</div>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" onclick="startMoving()">[ EXECUTE OVERRIDE ]</button>
+            <button id="stopBtn" onclick="stopMoving()">[ ABORT ]</button>
+        </div>
+    </div>
 
     <script>
-        function sendFakeGPS() {
-            // 1. Tạo tọa độ ngẫu nhiên dời đi một chút so với tâm Hà Nội
-            const fakeLat = 21.0285 + (Math.random() - 0.5) * 0.05;
-            const fakeLng = 105.8542 + (Math.random() - 0.5) * 0.05;
+        const socket = io('http://localhost:3000'); 
+        const logContainer = document.getElementById('log-container');
+        const telemetryBox = document.getElementById('telemetry-box');
+        
+        let moveInterval;
+        let currentLat = 21.0253; 
+        let currentLng = 105.8465;
 
-            // 2. Đóng gói thành JSON
-            const dataToSend = {
-                lat: fakeLat,
-                lng: fakeLng
-            };
+        function addLog(message, isAlert = false) {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.style.color = isAlert ? '#ff0' : '#0f0'; 
+            line.innerText = `[${time}] ${message}`;
+            logContainer.appendChild(line);
+            if (logContainer.children.length > 8) { // Giảm số dòng log xuống để nhường chỗ cho Radar
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
 
-            document.getElementById('log').innerText = "Đang gửi dữ liệu...";
+        socket.on('connect', () => {
+            document.getElementById('conn-status').innerText = "SECURE";
+            document.getElementById('conn-status').className = "highlight";
+            document.getElementById('device-id').innerText = socket.id;
+            addLog(`Uplink established. Handshake verified. ID: ${socket.id}`);
+        });
 
-            // 3. Dùng fetch để gọi phương thức POST (Giống lệnh http.POST() của ESP32)
-            fetch('http://localhost:3000/api/location', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(dataToSend)
-            })
-            .then(response => {
-                if (response.ok) {
-                    document.getElementById('log').innerText = 
-                        `✅ Đã gửi thành công! Tọa độ: ${fakeLat.toFixed(5)}, ${fakeLng.toFixed(5)}`;
-                } else {
-                    document.getElementById('log').innerText = "❌ Lỗi: Server từ chối!";
-                }
-            })
-            .catch(error => {
-                document.getElementById('log').innerText = "❌ Lỗi mạng: Không tìm thấy Server cổng 3000";
-            });
+        socket.on('disconnect', () => {
+            document.getElementById('conn-status').innerText = "OFFLINE";
+            document.getElementById('conn-status').className = "danger";
+            document.getElementById('device-id').innerText = "CONNECTION LOST";
+            addLog(`FATAL ERROR: Signal lost from Server.`, true);
+            stopMoving();
+        });
+
+        function startMoving() {
+            if (!socket.connected) { addLog("WARNING: Uplink offline. Cannot execute.", true); return; }
+            
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
+            addLog(">>> INIT SPATIAL MOVEMENT INJECTION <<<", true);
+
+            moveInterval = setInterval(() => {
+                currentLat += (Math.random() * 0.00002) - 0.000005;
+                currentLng += (Math.random() * 0.00002) - 0.000005;
+
+                const payload = { lat: currentLat, lng: currentLng };
+                socket.emit('send-gps', payload);
+                
+                // THAY VÌ THÊM LOG MỚI, CHỈ GHI ĐÈ LÊN BẢNG TELEMETRY BẰNG MÀU XANH CYAN CYAN
+                telemetryBox.innerText = `TX // LAT: ${currentLat.toFixed(7)} | LNG: ${currentLng.toFixed(7)}`;
+            }, 1000); 
+        }
+
+        function stopMoving() {
+            clearInterval(moveInterval);
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('stopBtn').style.display = 'none';
+            telemetryBox.innerText = "[ TELEMETRY: STANDBY ]";
+            addLog(">>> SIGNAL INJECTION ABORTED. STANDING BY. <<<", true);
         }
     </script>
-
 </body>
 </html>
