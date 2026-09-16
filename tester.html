@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Công cụ giả lập ESP32</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        button { padding: 15px 30px; font-size: 18px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background-color: #218838; }
+        #log { margin-top: 20px; font-weight: bold; color: #333; }
+    </style>
+</head>
+<body>
+
+    <h2>Công cụ Test API Bắn Tọa Độ</h2>
+    <button onclick="sendFakeGPS()">🚀 Bấm để gửi tọa độ giả</button>
+    <div id="log">Chưa có hành động nào...</div>
+
+    <script>
+        function sendFakeGPS() {
+            // 1. Tạo tọa độ ngẫu nhiên dời đi một chút so với tâm Hà Nội
+            const fakeLat = 21.0285 + (Math.random() - 0.5) * 0.05;
+            const fakeLng = 105.8542 + (Math.random() - 0.5) * 0.05;
+
+            // 2. Đóng gói thành JSON
+            const dataToSend = {
+                lat: fakeLat,
+                lng: fakeLng
+            };
+
+            document.getElementById('log').innerText = "Đang gửi dữ liệu...";
+
+            // 3. Dùng fetch để gọi phương thức POST (Giống lệnh http.POST() của ESP32)
+            fetch('http://localhost:3000/api/location', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(dataToSend)
+            })
+            .then(response => {
+                if (response.ok) {
+                    document.getElementById('log').innerText = 
+                        `✅ Đã gửi thành công! Tọa độ: ${fakeLat.toFixed(5)}, ${fakeLng.toFixed(5)}`;
+                } else {
+                    document.getElementById('log').innerText = "❌ Lỗi: Server từ chối!";
+                }
+            })
+            .catch(error => {
+                document.getElementById('log').innerText = "❌ Lỗi mạng: Không tìm thấy Server cổng 3000";
+            });
+        }
+    </script>
+
+</body>
+</html>
