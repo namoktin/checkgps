@@ -1,90 +1,140 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
-    <title>Bản đồ 2D - Đồng bộ Không gian 3D (Native Scaling & Zero Lag)</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/socket.io/socket.io.js"></script>
-    <style> 
-        body { margin: 0; padding: 0; background: #0f172a; }
-        #map { height: 100vh; width: 100%; } 
+    <meta charset="utf-8">
+    <title>Digital Twin - ESP32 3D Map</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    
+    <!-- Tải thư viện Mapbox GL JS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+    
+    <!-- Tải thư viện Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
         
-        /* Chấm tròn định vị người chơi */
-        .player-dot { 
-            width: 14px; height: 14px; background: #38bdf8; 
-            border: 2px solid white; border-radius: 50%;
-            position: absolute; top: -7px; left: -7px; z-index: 10;
-            box-shadow: 0 0 10px #38bdf8;
+        /* Giao diện Bảng hiển thị thông số ESP32 */
+        .telemetry-panel {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 20px;
+            border-radius: 8px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 10;
+            min-width: 200px;
         }
+        .telemetry-panel h3 { margin: 0 0 10px 0; font-size: 16px; color: #333; }
+        .data-row { margin-bottom: 8px; font-size: 14px; color: #555; }
+        .data-value { font-weight: bold; color: #000; }
+        #status { font-weight: bold; color: red; }
     </style>
 </head>
 <body>
-    <div id="map"></div>
-    <script>
-        // 1. Cấu hình Bản đồ Vệ tinh siêu Zoom
-        var map = L.map('map', { maxZoom: 24, zoomControl: true }).setView([21.028500, 105.854200], 23); 
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            maxNativeZoom: 19, maxZoom: 24, attribution: 'Tiles &copy; Esri'
-        }).addTo(map);
 
-        // 2. Tọa độ Cổ vật (Đã giãn cách để không gian rộng rãi hơn)
-        const artifacts = [
-            { name: "Bia Tiến Sĩ", lat: 21.0286000, lon: 105.8542000, color: "#94a3b8" },   
-            { name: "Lư Hương", lat: 21.0285600, lon: 105.8541300, color: "#d97706" }, 
-            { name: "Hoành Phi", lat: 21.0286200, lon: 105.8542500, color: "#ef4444" }    
-        ];
+<!-- Khung chứa bản đồ -->
+<div id="map"></div>
 
-        artifacts.forEach(art => {
-            L.circleMarker([art.lat, art.lon], {
-                color: art.color, fillColor: art.color, fillOpacity: 0.9, radius: 6
-            }).addTo(map).bindPopup(`<b>${art.name}</b>`);
-        });
+<!-- Bảng hiển thị dữ liệu trực tiếp -->
+<div class="telemetry-panel">
+    <h3>📡 Trạm điều khiển ESP32</h3>
+    <div class="data-row">Server: <span id="status">Đang kết nối...</span></div>
+    <div class="data-row">Lat: <span class="data-value" id="lat">--</span></div>
+    <div class="data-row">Lng: <span class="data-value" id="lng">--</span></div>
+    <div class="data-row">Yaw: <span class="data-value" id="yaw">--</span>°</div>
+</div>
 
-        // 3. Khởi tạo người chơi
-        const playerIcon = L.divIcon({ html: '<div class="player-dot"></div>', className: '', iconSize: [0, 0] });
-        let playerMarker = L.marker([21.028500, 105.854200], { icon: playerIcon, zIndexOffset: 1000 }).addTo(map);
+<script>
+    // ==============================================================
+    // 1. CẤU HÌNH MAPBOX 3D (Hãy dán Access Token của bạn vào đây)
+    // ==============================================================
+    mapboxgl.accessToken = 'BẠN_ĐIỀN_TOKEN_MAPBOX_CỦA_BẠN_VÀO_ĐÂY';
+    
+    // Khởi tạo bản đồ lấy tâm là tọa độ mặc định trong ESP32
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v12', 
+        center: [105.854200, 21.028500], 
+        zoom: 18,
+        pitch: 60, // Góc nghiêng 3D
+        bearing: 0,
+        antialias: true
+    });
 
-        // 4. Polygon vẽ nón tầm nhìn toán học
-        let visionPolygon = L.polygon([], {
-            color: '#38bdf8', fillColor: '#38bdf8', fillOpacity: 0.35, weight: 1.5, dashArray: '4'
-        }).addTo(map);
+    // Tạo Marker (điểm định vị) đại diện cho mạch ESP32
+    const espMarker = new mapboxgl.Marker({ color: '#ff0000' })
+        .setLngLat([105.854200, 21.028500])
+        .addTo(map);
 
-        // Công thức tính điểm đến dựa trên Tọa độ gốc, Hướng và Khoảng cách (Mét)
-        function getDestinationPoint(lat, lng, headingDeg, distMeters) {
-            const R = 6371e3;
-            const brng = headingDeg * Math.PI / 180;
-            const lat1 = lat * Math.PI / 180;
-            const lon1 = lng * Math.PI / 180;
-            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distMeters / R) + Math.cos(lat1) * Math.sin(distMeters / R) * Math.cos(brng));
-            const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(distMeters / R) * Math.cos(lat1), Math.cos(distMeters / R) - Math.sin(lat1) * Math.sin(lat2));
-            return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
-        }
-
-        const socket = io();
-        let isFirstLoad = true;
-
-        socket.on('telemetry-updated', (data) => {
-            const gps = data.sensors.gps;
-            const compass = data.sensors.compass;
-            const newPos = new L.LatLng(gps.lat, gps.lon);
-
-            // Cập nhật vị trí chấm tròn
-            playerMarker.setLatLng(newPos);
-
-            // Bắn 2 tia góc 45 độ, dài 4.2 mét
-            const leftPoint = getDestinationPoint(gps.lat, gps.lon, compass.yaw - 22.5, 13.5);
-            const rightPoint = getDestinationPoint(gps.lat, gps.lon, compass.yaw + 22.5, 13.5);
-
-            visionPolygon.setLatLngs([ [gps.lat, gps.lon], leftPoint, rightPoint ]);
-
-            // CAMERA ANTI-LAG: Tắt animate để bản đồ dính chặt vào mục tiêu không bị trượt giật cục
-            if(isFirstLoad) {
-                map.setView(newPos, 23);
-                isFirstLoad = false;
-            } else {
-                map.setView(newPos, map.getZoom(), { animate: false });
+    // Kích hoạt layer tòa nhà 3D
+    map.on('load', () => {
+        map.addLayer({
+            'id': '3d-buildings',
+            'source': 'composite',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+                'fill-extrusion-color': '#aaa',
+                'fill-extrusion-height': ['get', 'height'],
+                'fill-extrusion-base': ['get', 'min_height'],
+                'fill-extrusion-opacity': 0.6
             }
         });
-    </script>
+    });
+
+    // ==============================================================
+    // 2. KẾT NỐI SOCKET.IO SERVER & LẮNG NGHE DỮ LIỆU
+    // ==============================================================
+    const socket = io("https://checkgps.onrender.com");
+
+    // Lấy các thẻ HTML để hiển thị số liệu
+    const statusEl = document.getElementById('status');
+    const latEl = document.getElementById('lat');
+    const lngEl = document.getElementById('lng');
+    const yawEl = document.getElementById('yaw');
+
+    // Bắt sự kiện kết nối Server
+    socket.on("connect", () => {
+        statusEl.innerText = "🟢 Đã kết nối";
+        statusEl.style.color = "green";
+    });
+
+    socket.on("disconnect", () => {
+        statusEl.innerText = "🔴 Mất kết nối";
+        statusEl.style.color = "red";
+    });
+
+    // Lắng nghe gói dữ liệu 'telemetry-update' được Server broadcast xuống
+    socket.on('telemetry-update', (data) => {
+        // Trích xuất tọa độ từ chuỗi JSON của ESP32
+        const lat = data.sensors.gps.lat;
+        const lng = data.sensors.gps.lon;
+        const yaw = data.sensors.compass.yaw;
+
+        // 1. In số liệu lên bảng theo thời gian thực
+        latEl.innerText = lat.toFixed(6);
+        lngEl.innerText = lng.toFixed(6);
+        yawEl.innerText = yaw.toFixed(1);
+
+        // 2. Cập nhật vị trí và góc xoay của Marker đỏ
+        espMarker.setLngLat([lng, lat]);
+        espMarker.setRotation(yaw);
+
+        // 3. Tự động di chuyển góc nhìn của bản đồ (Camera) mượt mà bám theo Marker
+        map.easeTo({
+            center: [lng, lat],
+            bearing: yaw,      // Bản đồ sẽ xoay theo hướng di chuyển
+            duration: 1000,    // Thời gian trượt khớp với tốc độ gửi 1s/lần của mạch
+            easing: (t) => t   // Chuyển động tuyến tính
+        });
+    });
+</script>
 </body>
 </html>

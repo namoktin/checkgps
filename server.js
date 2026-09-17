@@ -1,41 +1,36 @@
 const express = require('express');
 const http = require('http');
-const cors = require('cors');
 const { Server } = require('socket.io');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
-app.use(cors());
-// Cho phép server load trực tiếp các file .html trong thư mục hiện tại
+// Cấp quyền nhận/gửi từ mọi nguồn (Chống lỗi CORS)
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] }
+});
+
+// Cho phép Render truy cập file HTML của bạn (nếu bạn để index.html cùng thư mục với server.js)
 app.use(express.static(__dirname)); 
 
 io.on('connection', (socket) => {
-    console.log('🔗 Thiết bị kết nối:', socket.id);
+  console.log('🔗 Một thiết bị vừa kết nối:', socket.id);
 
-    // Kênh 1: Hứng tọa độ từ Simulator và ném sang Bản đồ 2D
-    socket.on('send-telemetry', (payload) => {
-        io.emit('telemetry-updated', payload); 
-    });
+  // 1. LẮNG NGHE SỰ KIỆN TỪ ESP32
+  socket.on('send-telemetry', (data) => {
+    // console.log("Hứng dữ liệu từ ESP32:", data);
+    
+    // 2. PHÁT LẠI SỰ KIỆN CHO TRANG WEB BẢN ĐỒ
+    // Lệnh này vứt dữ liệu cho TẤT CẢ các thiết bị đang kết nối (trừ thằng ESP32 vừa gửi lên)
+    socket.broadcast.emit('telemetry-update', data); 
+  });
 
-    // Kênh 2: Xử lý khung Chat AI
-    socket.on('ask-ai', (data) => {
-        console.log(`[CHAT] Khách hỏi: ${data.question}`);
-        // Giả lập độ trễ AI suy nghĩ 1.5s
-        setTimeout(() => {
-            socket.emit('ai-answer', { 
-                reply: `[HỆ THỐNG AI]: Bạn vừa hỏi về "${data.question}". Hệ thống RAG sẽ được tích hợp vào đây để trích xuất thông tin cổ vật trả lời bạn.` 
-            });
-        }, 1500);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('❌ Ngắt kết nối:', socket.id);
-    });
+  socket.on('disconnect', () => {
+    console.log('❌ Một thiết bị đã ngắt kết nối:', socket.id);
+  });
 });
 
-server.listen(3000, () => {
-    console.log('🚀 Server đang chạy tại http://localhost:3000');
+const PORT = process.env.PORT || 3000; // Render sẽ tự chọn port 443 khi push lên môi trường Production
+server.listen(PORT, () => {
+  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
 });
