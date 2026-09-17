@@ -28,6 +28,13 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('❌ Một thiết bị đã ngắt kết nối:', socket.id);
   });
+  // Lắng nghe lệnh Bật/Tắt từ trang stop.html
+  socket.on('command', (cmdData) => {
+    console.log("🛠️ Nhận lệnh từ Web Điều Khiển:", cmdData);
+    
+    // Phát lại lệnh này xuống cho ESP32
+    socket.broadcast.emit('device-command', cmdData); 
+  });
 });
 
 const PORT = process.env.PORT || 3000; // Render sẽ tự chọn port 443 khi push lên môi trường Production

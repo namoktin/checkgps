@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Điều Khiển ESP32-S3</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
+        .control-panel { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
+        h2 { margin-bottom: 20px; color: #333; }
+        .btn { padding: 15px 40px; font-size: 18px; font-weight: bold; color: white; border: none; border-radius: 8px; cursor: pointer; margin: 10px; width: 200px; transition: 0.2s; }
+        .btn-start { background-color: #28a745; }
+        .btn-start:hover { background-color: #218838; }
+        .btn-stop { background-color: #dc3545; }
+        .btn-stop:hover { background-color: #c82333; }
+        #status { margin-top: 20px; font-weight: bold; color: #666; }
+    </style>
+</head>
+<body>
+
+<div class="control-panel">
+    <h2>🕹️ ĐIỀU KHIỂN DIGITAL TWIN</h2>
+    <p>Trạng thái mạng: <span id="network-status" style="color: red;">Đang kết nối...</span></p>
+    
+    <button class="btn btn-start" onclick="sendCommand('START')">▶ BẬT ESP32</button>
+    <button class="btn btn-stop" onclick="sendCommand('STOP')">⏹ DỪNG ESP32</button>
+    
+    <div id="status">Lệnh gần nhất: Chưa có</div>
+</div>
+
+<script>
+    // Kết nối tới Server Render của bạn
+    const socket = io("https://checkgps.onrender.com");
+    const netStatus = document.getElementById('network-status');
+    const cmdStatus = document.getElementById('status');
+
+    socket.on("connect", () => {
+        netStatus.innerText = "🟢 Đã kết nối Server";
+        netStatus.style.color = "green";
+    });
+
+    socket.on("disconnect", () => {
+        netStatus.innerText = "🔴 Mất kết nối";
+        netStatus.style.color = "red";
+    });
+
+    // Hàm gửi lệnh khi bấm nút
+    function sendCommand(action) {
+        // Gửi lệnh lên Server với tên sự kiện là 'command'
+        const payload = { device_id: "ESP32_HARDWARE_01", action: action };
+        socket.emit('command', payload);
+        
+        cmdStatus.innerText = `Lệnh gần nhất: ${action === 'START' ? 'Đã gửi lệnh BẬT' : 'Đã gửi lệnh DỪNG'}`;
+        cmdStatus.style.color = action === 'START' ? 'green' : 'red';
+    }
+</script>
+
+</body>
+</html>
