@@ -2,25 +2,25 @@
 <html lang="vi">
 <head>
     <meta charset="utf-8">
-    <title>Digital Twin - ESP32 3D Map</title>
+    <title>Digital Twin 2D - ESP32 Map</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
-    <!-- Tải thư viện Mapbox GL JS -->
-    <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+    <!-- Tải thư viện bản đồ Leaflet.js MIỄN PHÍ -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Tải thư viện Socket.IO Client -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
     <style>
         body { margin: 0; padding: 0; overflow: hidden; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 1; }
         
-        /* Giao diện Bảng hiển thị thông số ESP32 */
+        /* Giao diện Bảng hiển thị thông số */
         .telemetry-panel {
             position: absolute;
             top: 15px;
-            left: 15px;
+            left: 55px; /* Dịch sang phải một chút để tránh nút Zoom của Leaflet */
             background: rgba(255, 255, 255, 0.95);
             padding: 15px 20px;
             border-radius: 8px;
@@ -37,10 +37,8 @@
 </head>
 <body>
 
-<!-- Khung chứa bản đồ -->
 <div id="map"></div>
 
-<!-- Bảng hiển thị dữ liệu trực tiếp -->
 <div class="telemetry-panel">
     <h3>📡 Trạm điều khiển ESP32</h3>
     <div class="data-row">Server: <span id="status">Đang kết nối...</span></div>
@@ -51,56 +49,31 @@
 
 <script>
     // ==============================================================
-    // 1. CẤU HÌNH MAPBOX 3D (Hãy dán Access Token của bạn vào đây)
+    // 1. CẤU HÌNH BẢN ĐỒ LEAFLET (Không cần Key)
     // ==============================================================
-    mapboxgl.accessToken = 'BẠN_ĐIỀN_TOKEN_MAPBOX_CỦA_BẠN_VÀO_ĐÂY';
-    
-    // Khởi tạo bản đồ lấy tâm là tọa độ mặc định trong ESP32
-    const map = new mapboxgl.Map({
-        container: 'map',
-        style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [105.854200, 21.028500], 
-        zoom: 18,
-        pitch: 60, // Góc nghiêng 3D
-        bearing: 0,
-        antialias: true
-    });
+    // Khởi tạo bản đồ ở tọa độ Hỏa Lò
+    const map = L.map('map').setView([21.028500, 105.854200], 18);
 
-    // Tạo Marker (điểm định vị) đại diện cho mạch ESP32
-    const espMarker = new mapboxgl.Marker({ color: '#ff0000' })
-        .setLngLat([105.854200, 21.028500])
-        .addTo(map);
+    // Kéo dữ liệu ảnh bản đồ từ OpenStreetMap (Hoàn toàn miễn phí)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-    // Kích hoạt layer tòa nhà 3D
-    map.on('load', () => {
-        map.addLayer({
-            'id': '3d-buildings',
-            'source': 'composite',
-            'source-layer': 'building',
-            'filter': ['==', 'extrude', 'true'],
-            'type': 'fill-extrusion',
-            'minzoom': 15,
-            'paint': {
-                'fill-extrusion-color': '#aaa',
-                'fill-extrusion-height': ['get', 'height'],
-                'fill-extrusion-base': ['get', 'min_height'],
-                'fill-extrusion-opacity': 0.6
-            }
-        });
-    });
+    // Tạo Marker (Điểm định vị đỏ) đại diện cho mạch ESP32
+    // Leaflet mặc định dùng hình giọt nước xanh, ta dùng hàm setLatLng để dịch chuyển nó
+    const espMarker = L.marker([21.028500, 105.854200]).addTo(map);
 
     // ==============================================================
     // 2. KẾT NỐI SOCKET.IO SERVER & LẮNG NGHE DỮ LIỆU
     // ==============================================================
     const socket = io("https://checkgps.onrender.com");
 
-    // Lấy các thẻ HTML để hiển thị số liệu
     const statusEl = document.getElementById('status');
     const latEl = document.getElementById('lat');
     const lngEl = document.getElementById('lng');
     const yawEl = document.getElementById('yaw');
 
-    // Bắt sự kiện kết nối Server
     socket.on("connect", () => {
         statusEl.innerText = "🟢 Đã kết nối";
         statusEl.style.color = "green";
@@ -111,29 +84,23 @@
         statusEl.style.color = "red";
     });
 
-    // Lắng nghe gói dữ liệu 'telemetry-update' được Server broadcast xuống
+    // Lắng nghe dữ liệu
     socket.on('telemetry-update', (data) => {
-        // Trích xuất tọa độ từ chuỗi JSON của ESP32
         const lat = data.sensors.gps.lat;
         const lng = data.sensors.gps.lon;
         const yaw = data.sensors.compass.yaw;
 
-        // 1. In số liệu lên bảng theo thời gian thực
+        // Cập nhật bảng số liệu
         latEl.innerText = lat.toFixed(6);
         lngEl.innerText = lng.toFixed(6);
         yawEl.innerText = yaw.toFixed(1);
 
-        // 2. Cập nhật vị trí và góc xoay của Marker đỏ
-        espMarker.setLngLat([lng, lat]);
-        espMarker.setRotation(yaw);
+        // Di chuyển Marker trên bản đồ (Lưu ý Leaflet dùng mảng [Vĩ độ, Kinh độ])
+        const newLatLng = new L.LatLng(lat, lng);
+        espMarker.setLatLng(newLatLng);
 
-        // 3. Tự động di chuyển góc nhìn của bản đồ (Camera) mượt mà bám theo Marker
-        map.easeTo({
-            center: [lng, lat],
-            bearing: yaw,      // Bản đồ sẽ xoay theo hướng di chuyển
-            duration: 1000,    // Thời gian trượt khớp với tốc độ gửi 1s/lần của mạch
-            easing: (t) => t   // Chuyển động tuyến tính
-        });
+        // Kéo màn hình đi theo Marker mượt mà
+        map.panTo(newLatLng);
     });
 </script>
 </body>
